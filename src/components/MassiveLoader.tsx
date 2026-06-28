@@ -117,49 +117,100 @@ export default function MassiveLoader({ onBatchLoaded }: MassiveLoaderProps) {
 
     if (fileName.endsWith(".pdf")) {
       // === PDF HANDLING via pdf.js ===
-      setActiveTab("ocr"); // Switch to OCR tab
+      setActiveTab("ocr");
       setOcrLoading(true);
-      setOcrStep("Cargando PDF...");
+      setOcrStep("Analizando PDF...");
       setOcrProgress(0);
       
       try {
         const arrayBuf = await file.arrayBuffer();
-        // Dynamic import de pdfjs-dist
         const pdfjsLib = await import("pdfjs-dist");
         pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/pdf.worker.min.mjs`;
         
         const pdf = await pdfjsLib.getDocument({ data: arrayBuf }).promise;
         const totalPages = pdf.numPages;
         setOcrProgress(5);
-        
-        const allPatients: ParsedPaciente[] = [];
+
+        // === FASE 1: Intentar extraer texto directamente (PDF estructurado) ===
+        let allTextLines: string[] = [];
         
         for (let pageNum = 1; pageNum <= totalPages; pageNum++) {
-          setOcrStep(`Renderizando página ${pageNum} de ${totalPages}...`);
-          setOcrProgress(5 + Math.round((pageNum / totalPages) * 20));
+          setOcrStep(`Leyendo texto página ${pageNum} de ${totalPages}...`);
+          setOcrProgress(5 + Math.round((pageNum / totalPages) * 10));
           
           const page = await pdf.getPage(pageNum);
-          const viewport = page.getViewport({ scale: 2.0 }); // 2x para mejor OCR
+          const textContent = await page.getTextContent();
           
-          const offCanvas = document.createElement("canvas");
-          offCanvas.width = viewport.width;
-          offCanvas.height = viewport.height;
-          const offCtx = offCanvas.getContext("2d")!;
+          // Agrupar items de texto por línea (basado en coordenada Y)
+          const lineMap = new Map<number, string[]>();
+          for (const item of textContent.items) {
+            if (!("str" in item)) continue;
+            const txt = (item as any).str?.trim();
+            if (!txt) continue;
+            const y = Math.round((item as any).transform?.[5] || 0);
+            if (!lineMap.has(y)) lineMap.set(y, []);
+            lineMap.get(y)!.push(txt);
+          }
           
-          await page.render({
-            canvasContext: offCtx,
-            viewport: viewport,
-          }).promise;
-          
-          // Preprocesar y hacer OCR de esta página
-          const pagePatients = await processOCRCanvasPage(offCanvas, pageNum, totalPages, true);
-          allPatients.push(...pagePatients);
+          // Ordenar líneas de arriba hacia abajo
+          const sortedYs = [...lineMap.keys()].sort((a, b) => b - a); // Y crece hacia abajo en PDF
+          for (const y of sortedYs) {
+            allTextLines.push(lineMap.get(y)!.join(" "));
+          }
         }
+
+        // === DECISIÓN: ¿PDF estructurado o imagen? ===
+        const totalTextChars = allTextLines.join("").replace(/\s/g, "").length;
+        const isStructured = totalTextChars > 50; // Umbral: más de 50 caracteres reales
         
-        if (allPatients.length > 0) {
-          onBatchLoaded(allPatients);
+        if (isStructured) {
+          // ✅ PDF ESTRUCTURADO — parse directo como texto
+          setOcrStep("PDF estructurado detectado. Parseando columnas...");
+          setOcrProgress(80);
+          
+          const matrix = allTextLines
+            .filter(l => l.trim().length > 0)
+            .map(line => {
+              // Detectar delimitador (tab o múltiples espacios)
+              const delimiter = line.includes("\t") ? "\t" : /\s{2,}/;
+              return line.split(delimiter).map(c => c.trim()).filter(c => c.length > 0);
+            })
+            .filter(row => row.length >= 2); // Mínimo 2 columnas
+          
+          processParsedMatrix(matrix);
         } else {
-          alert("No se pudieron extraer pacientes del PDF. Intente con mejor calidad de escaneo.");
+          // ❌ PDF IMAGEN — pipeline OCR
+          setOcrStep("PDF es imagen escaneada. Activando OCR...");
+          setOcrProgress(15);
+          
+          const allPatients: ParsedPaciente[] = [];
+          
+          for (let pageNum = 1; pageNum <= totalPages; pageNum++) {
+            setOcrStep(`Renderizando página ${pageNum} de ${totalPages} para OCR...`);
+            setOcrProgress(15 + Math.round((pageNum / totalPages) * 15));
+            
+            const page = await pdf.getPage(pageNum);
+            const viewport = page.getViewport({ scale: 2.0 });
+            
+            const offCanvas = document.createElement("canvas");
+            offCanvas.width = viewport.width;
+            offCanvas.height = viewport.height;
+            const offCtx = offCanvas.getContext("2d")!;
+            
+            await page.render({
+              canvasContext: offCtx,
+              viewport: viewport,
+            }).promise;
+            
+            const pagePatients = await processOCRCanvasPage(offCanvas, pageNum, totalPages, true);
+            allPatients.push(...pagePatients);
+          }
+          
+          if (allPatients.length > 0) {
+            onBatchLoaded(allPatients);
+          } else {
+            alert("No se pudieron extraer pacientes del PDF. Intente con mejor calidad de escaneo.");
+          }
         }
         
         setOcrLoading(false);
