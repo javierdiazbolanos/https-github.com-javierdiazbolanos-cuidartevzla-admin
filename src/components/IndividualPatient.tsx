@@ -1,0 +1,581 @@
+/**
+ * @license
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+import React, { useState, useEffect } from "react";
+import { Hospital, Paciente } from "../types";
+import { createPaciente, searchPacientes, updatePaciente } from "../utils/api";
+import { Search, Plus, UserPlus, CheckCircle, RefreshCw, AlertTriangle, ShieldCheck } from "lucide-react";
+
+interface IndividualPatientProps {
+  hospitales: Hospital[];
+  onPatientMutated: () => void; // Reload lists
+}
+
+export default function IndividualPatient({ hospitales, onPatientMutated }: IndividualPatientProps) {
+  // --- INGRESO INDIVIDUAL STATE ---
+  const [nombre, setNombre] = useState("");
+  const [cedula, setCedula] = useState("");
+  const [edad, setEdad] = useState("");
+  const [sexo, setSexo] = useState<"Masculino" | "Femenino" | "Desconocido">("Desconocido");
+  const [procedencia, setProcedencia] = useState("");
+  const [hospitalId, setHospitalId] = useState<string>("");
+  const [hospitalNuevo, setHospitalNuevo] = useState("");
+  const [ingresoFecha, setIngresoFecha] = useState(new Date().toISOString().split("T")[0]);
+  const [estado, setEstado] = useState("hospitalizado");
+  
+  const [ingresoSuccess, setIngresoSuccess] = useState(false);
+  const [ingresoLoading, setIngresoLoading] = useState(false);
+  const [ingresoError, setIngresoError] = useState("");
+
+  // --- BÚSQUEDA Y ACTUALIZACIÓN STATE ---
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchResults, setSearchResults] = useState<Paciente[]>([]);
+  const [searchLoading, setSearchLoading] = useState(false);
+  const [editingPatient, setEditingPatient] = useState<Paciente | null>(null);
+  
+  // Inline edit state
+  const [editEstado, setEditEstado] = useState("");
+  const [editHospitalId, setEditHospitalId] = useState<string>("");
+  const [editNombre, setEditNombre] = useState("");
+  const [editCedula, setEditCedula] = useState("");
+  const [editEdad, setEditEdad] = useState("");
+  const [editSexo, setEditSexo] = useState<"Masculino" | "Femenino" | "Desconocido">("Desconocido");
+  const [editProcedencia, setEditProcedencia] = useState("");
+  const [editLoading, setEditLoading] = useState(false);
+  const [editError, setEditError] = useState("");
+
+  // Search trigger on query change
+  useEffect(() => {
+    const delayDebounce = setTimeout(() => {
+      handleSearch();
+    }, 300);
+    return () => clearTimeout(delayDebounce);
+  }, [searchQuery]);
+
+  const handleSearch = async () => {
+    setSearchLoading(true);
+    try {
+      const res = await searchPacientes(searchQuery);
+      setSearchResults(res);
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setSearchLoading(false);
+    }
+  };
+
+  const handleCreatePatient = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!nombre.trim()) {
+      setIngresoError("El nombre completo es obligatorio.");
+      return;
+    }
+
+    setIngresoLoading(true);
+    setIngresoError("");
+    setIngresoSuccess(false);
+
+    try {
+      const payload = {
+        nombre: nombre.trim(),
+        cedula: cedula.trim() || undefined,
+        edad: edad ? parseInt(edad, 10) : undefined,
+        sexo,
+        procedencia: procedencia.trim() || undefined,
+        hospital_id: hospitalId ? parseInt(hospitalId, 10) : null,
+        hospital_nuevo: hospitalId === "" ? hospitalNuevo.trim() || "Otros" : undefined,
+        ingreso_fecha: ingresoFecha,
+        estado,
+      };
+
+      const res = await createPaciente(payload);
+      if (res.ok) {
+        setIngresoSuccess(true);
+        setNombre("");
+        setCedula("");
+        setEdad("");
+        setSexo("Desconocido");
+        setProcedencia("");
+        setHospitalId("");
+        setHospitalNuevo("");
+        onPatientMutated();
+        // Clear success message after 4s
+        setTimeout(() => setIngresoSuccess(false), 4000);
+      } else {
+        setIngresoError(res.error || "No se pudo registrar al paciente.");
+      }
+    } catch (err: any) {
+      setIngresoError(err.message || "Error de red al intentar registrar.");
+    } finally {
+      setIngresoLoading(false);
+    }
+  };
+
+  const handleStartEdit = (p: Paciente) => {
+    setEditingPatient(p);
+    setEditEstado(p.estado);
+    setEditHospitalId(p.hospital_id ? String(p.hospital_id) : "");
+    setEditNombre(p.nombre);
+    setEditCedula(p.cedula || "");
+    setEditEdad(p.edad ? String(p.edad) : "");
+    setEditSexo(p.sexo);
+    setEditProcedencia(p.procedencia || "");
+    setEditError("");
+  };
+
+  const handleUpdatePatient = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingPatient) return;
+    if (!editNombre.trim()) {
+      setEditError("El nombre completo es requerido.");
+      return;
+    }
+
+    setEditLoading(true);
+    setEditError("");
+
+    try {
+      const payload = {
+        estado: editEstado,
+        nombre: editNombre.trim(),
+        cedula: editCedula.trim() || undefined,
+        edad: editEdad ? parseInt(editEdad, 10) : undefined,
+        sexo: editSexo,
+        procedencia: editProcedencia.trim() || undefined,
+        hospital_id: editHospitalId ? parseInt(editHospitalId, 10) : null,
+      };
+
+      const res = await updatePaciente(editingPatient.id, payload);
+      if (res.ok) {
+        setEditingPatient(null);
+        handleSearch();
+        onPatientMutated();
+      } else {
+        setEditError("Error al actualizar paciente.");
+      }
+    } catch (err: any) {
+      setEditError(err.message || "Error al conectar con la API.");
+    } finally {
+      setEditLoading(false);
+    }
+  };
+
+  return (
+    <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 font-sans">
+      {/* 1. REGISTRO INDIVIDUAL RÁPIDO */}
+      <div className="lg:col-span-5 bg-white rounded-2xl border border-slate-200 p-6 shadow-sm">
+        <div className="flex items-center space-x-2.5 mb-5">
+          <div className="w-10 h-10 bg-sky-50 border border-sky-200 text-sky-700 rounded-xl flex items-center justify-center">
+            <UserPlus className="w-5 h-5" />
+          </div>
+          <div>
+            <h2 className="text-lg font-bold text-slate-800 font-display">Admisión Individual Rápida</h2>
+            <p className="text-xs text-slate-500">Ingreso de pacientes de forma directa al sistema</p>
+          </div>
+        </div>
+
+        <form onSubmit={handleCreatePatient} className="space-y-4 text-left">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="md:col-span-2">
+              <label className="block text-[11px] font-mono text-slate-500 uppercase tracking-wider mb-1.5">
+                Nombre Completo del Paciente <span className="text-sky-600 font-bold">*</span>
+              </label>
+              <input
+                type="text"
+                required
+                placeholder="Ej. Juan Andrés Pérez Delgado"
+                value={nombre}
+                onChange={(e) => setNombre(e.target.value)}
+                className="w-full bg-slate-50 border border-slate-200 focus:border-sky-500 rounded-lg px-3 py-2 text-sm text-slate-800 focus:outline-none"
+              />
+            </div>
+
+            <div>
+              <label className="block text-[11px] font-mono text-slate-500 uppercase tracking-wider mb-1.5">
+                Cédula (Opcional)
+              </label>
+              <input
+                type="text"
+                maxLength={9}
+                placeholder="Ej. 18274958"
+                value={cedula}
+                onChange={(e) => setCedula(e.target.value.replace(/\D/g, ""))}
+                className="w-full bg-slate-50 border border-slate-200 focus:border-sky-500 rounded-lg px-3 py-2 text-sm text-slate-800 focus:outline-none font-mono"
+              />
+            </div>
+
+            <div>
+              <label className="block text-[11px] font-mono text-slate-500 uppercase tracking-wider mb-1.5">
+                Edad (Opcional)
+              </label>
+              <input
+                type="text"
+                maxLength={3}
+                placeholder="Ej. 34"
+                value={edad}
+                onChange={(e) => setEdad(e.target.value.replace(/\D/g, ""))}
+                className="w-full bg-slate-50 border border-slate-200 focus:border-sky-500 rounded-lg px-3 py-2 text-sm text-slate-800 focus:outline-none font-mono"
+              />
+            </div>
+
+            <div>
+              <label className="block text-[11px] font-mono text-slate-500 uppercase tracking-wider mb-1.5">
+                Sexo
+              </label>
+              <select
+                value={sexo}
+                onChange={(e) => setSexo(e.target.value as any)}
+                className="w-full bg-slate-50 border border-slate-200 focus:border-sky-500 rounded-lg px-3 py-2 text-sm text-slate-800 focus:outline-none"
+              >
+                <option value="Desconocido">Desconocido</option>
+                <option value="Masculino">Masculino</option>
+                <option value="Femenino">Femenino</option>
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-[11px] font-mono text-slate-500 uppercase tracking-wider mb-1.5">
+                Fecha de Ingreso
+              </label>
+              <input
+                type="date"
+                value={ingresoFecha}
+                onChange={(e) => setIngresoFecha(e.target.value)}
+                className="w-full bg-slate-50 border border-slate-200 focus:border-sky-500 rounded-lg px-3 py-2 text-sm text-slate-800 focus:outline-none font-mono"
+              />
+            </div>
+
+            <div className="md:col-span-2">
+              <label className="block text-[11px] font-mono text-slate-500 uppercase tracking-wider mb-1.5">
+                Procedencia / Municipio / Sector
+              </label>
+              <input
+                type="text"
+                placeholder="Ej. Petare, Sector La Bombilla"
+                value={procedencia}
+                onChange={(e) => setProcedencia(e.target.value)}
+                className="w-full bg-slate-50 border border-slate-200 focus:border-sky-500 rounded-lg px-3 py-2 text-sm text-slate-800 focus:outline-none"
+              />
+            </div>
+
+            <div className="md:col-span-2">
+              <label className="block text-[11px] font-mono text-slate-500 uppercase tracking-wider mb-1.5">
+                Hospital Destinatario <span className="text-sky-600 font-bold">*</span>
+              </label>
+              <select
+                value={hospitalId}
+                onChange={(e) => setHospitalId(e.target.value)}
+                className="w-full bg-slate-50 border border-slate-200 focus:border-sky-500 rounded-lg px-3 py-2 text-sm text-slate-800 focus:outline-none"
+              >
+                <option value="">-- Registrar en hospital externo / temporal --</option>
+                {hospitales.map((h) => (
+                  <option key={h.id} value={h.id}>
+                    {h.nombre} ({h.municipio})
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {hospitalId === "" && (
+              <div className="md:col-span-2">
+                <label className="block text-[11px] font-mono text-slate-500 uppercase tracking-wider mb-1.5">
+                  Nombre del Hospital Externo o Campamento Temporal
+                </label>
+                <input
+                  type="text"
+                  placeholder="Ej. Ambulatorio Polideportivo La California"
+                  value={hospitalNuevo}
+                  onChange={(e) => setHospitalNuevo(e.target.value)}
+                  className="w-full bg-slate-50 border border-slate-200 focus:border-sky-500 rounded-lg px-3 py-2 text-sm text-slate-800 focus:outline-none"
+                />
+              </div>
+            )}
+
+            <div>
+              <label className="block text-[11px] font-mono text-slate-500 uppercase tracking-wider mb-1.5">
+                Estado de Ingreso
+              </label>
+              <select
+                value={estado}
+                onChange={(e) => setEstado(e.target.value)}
+                className="w-full bg-slate-50 border border-slate-200 focus:border-sky-500 rounded-lg px-3 py-2 text-sm text-slate-800 focus:outline-none"
+              >
+                <option value="hospitalizado">Hospitalizado (Activo)</option>
+                <option value="alta">Alta Médica</option>
+                <option value="referido">Referido / Trasladado</option>
+                <option value="fallecido">Fallecido</option>
+              </select>
+            </div>
+          </div>
+
+          {ingresoError && (
+            <div className="bg-rose-50 border border-rose-200 text-rose-850 text-xs rounded-lg p-3 flex items-start space-x-2">
+              <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5 text-rose-600" />
+              <span>{ingresoError}</span>
+            </div>
+          )}
+
+          {ingresoSuccess && (
+            <div className="bg-sky-50 border border-sky-200 text-sky-800 text-xs rounded-lg p-3 flex items-center space-x-2">
+              <CheckCircle className="w-4 h-4 text-sky-600" />
+              <span>¡Paciente registrado en base de datos con éxito!</span>
+            </div>
+          )}
+
+          <button
+            type="submit"
+            disabled={ingresoLoading}
+            id="btn-submit-patient"
+            className="w-full bg-sky-600 hover:bg-sky-500 disabled:opacity-50 text-white font-bold py-2.5 px-4 rounded-xl shadow-sm transition-colors text-sm flex items-center justify-center space-x-1.5 cursor-pointer"
+          >
+            <Plus className="w-4 h-4" />
+            <span>{ingresoLoading ? "Registrando..." : "Registrar Paciente Directamente"}</span>
+          </button>
+        </form>
+      </div>
+
+      {/* 2. BÚSQUEDA Y ACTUALIZACIÓN DE ESTADO */}
+      <div className="lg:col-span-7 bg-white rounded-2xl border border-slate-200 p-6 shadow-sm flex flex-col h-full min-h-[500px]">
+        <div className="flex items-center space-x-2.5 mb-5">
+          <div className="w-10 h-10 bg-sky-50 border border-sky-200 text-sky-700 rounded-xl flex items-center justify-center">
+            <Search className="w-5 h-5" />
+          </div>
+          <div>
+            <h2 className="text-lg font-bold text-slate-800 font-sans font-display">Buscador de Pacientes & Actualizador de Estado</h2>
+            <p className="text-xs text-slate-500 font-sans">Busque registros por Cédula, Nombre o Centro de Salud para triage rápido</p>
+          </div>
+        </div>
+
+        {/* Search input bar */}
+        <div className="relative mb-4">
+          <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+          <input
+            type="text"
+            placeholder="Buscar por cédula, nombre o centro médico..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            className="w-full bg-slate-50 border border-slate-200 focus:border-sky-500 rounded-xl pl-10 pr-4 py-2.5 text-sm text-slate-800 focus:outline-none"
+          />
+          {searchLoading && (
+            <div className="absolute right-3.5 top-1/2 -translate-y-1/2">
+              <RefreshCw className="w-4 h-4 text-sky-600 animate-spin" />
+            </div>
+          )}
+        </div>
+
+        {/* Results / Inline editor */}
+        <div className="flex-1 overflow-y-auto max-h-[420px] space-y-3 pr-1">
+          {editingPatient ? (
+            /* INLINE EDITOR PANEL */
+            <form onSubmit={handleUpdatePatient} className="bg-slate-50 p-4 rounded-xl border border-sky-500/20 space-y-4 animate-fadeIn text-left shadow-inner font-sans">
+              <div className="flex justify-between items-center border-b border-slate-200 pb-2">
+                <span className="text-xs font-mono font-bold text-sky-700 uppercase tracking-widest flex items-center space-x-1">
+                  <ShieldCheck className="w-3.5 h-3.5" />
+                  <span>Modo Modificación Autorizada</span>
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setEditingPatient(null)}
+                  className="text-slate-500 hover:text-slate-750 text-xs cursor-pointer"
+                >
+                  Cancelar
+                </button>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="md:col-span-2">
+                  <label className="block text-[11px] font-mono text-slate-500 uppercase tracking-wider mb-1">
+                    Nombre Completo
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={editNombre}
+                    onChange={(e) => setEditNombre(e.target.value)}
+                    className="w-full bg-white border border-slate-200 focus:border-sky-500 rounded-lg px-3 py-1.5 text-sm text-slate-800 focus:outline-none"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-mono text-slate-500 uppercase tracking-wider mb-1">
+                    Cédula
+                  </label>
+                  <input
+                    type="text"
+                    maxLength={9}
+                    value={editCedula}
+                    onChange={(e) => setEditCedula(e.target.value.replace(/\D/g, ""))}
+                    className="w-full bg-white border border-slate-200 focus:border-sky-500 rounded-lg px-3 py-1.5 text-sm text-slate-800 focus:outline-none font-mono"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-mono text-slate-500 uppercase tracking-wider mb-1">
+                    Edad
+                  </label>
+                  <input
+                    type="text"
+                    maxLength={3}
+                    value={editEdad}
+                    onChange={(e) => setEditEdad(e.target.value.replace(/\D/g, ""))}
+                    className="w-full bg-white border border-slate-200 focus:border-sky-500 rounded-lg px-3 py-1.5 text-sm text-slate-800 focus:outline-none font-mono"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-mono text-slate-500 uppercase tracking-wider mb-1">
+                    Sexo
+                  </label>
+                  <select
+                    value={editSexo}
+                    onChange={(e) => setEditSexo(e.target.value as any)}
+                    className="w-full bg-white border border-slate-200 focus:border-sky-500 rounded-lg px-3 py-1.5 text-sm text-slate-800 focus:outline-none"
+                  >
+                    <option value="Desconocido">Desconocido</option>
+                    <option value="Masculino">Masculino</option>
+                    <option value="Femenino">Femenino</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-mono text-slate-500 uppercase tracking-wider mb-1">
+                    Procedencia / Municipio
+                  </label>
+                  <input
+                    type="text"
+                    value={editProcedencia}
+                    onChange={(e) => setEditProcedencia(e.target.value)}
+                    className="w-full bg-white border border-slate-200 focus:border-sky-500 rounded-lg px-3 py-1.5 text-sm text-slate-800 focus:outline-none"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-mono text-slate-500 uppercase tracking-wider mb-1">
+                    Estado Actual
+                  </label>
+                  <select
+                    value={editEstado}
+                    onChange={(e) => setEditEstado(e.target.value)}
+                    className="w-full bg-white border border-slate-200 focus:border-sky-500 rounded-lg px-3 py-1.5 text-sm text-sky-700 focus:outline-none font-medium"
+                  >
+                    <option value="hospitalizado">Hospitalizado (Activo)</option>
+                    <option value="alta">Alta Médica</option>
+                    <option value="referido">Referido / Trasladado</option>
+                    <option value="fallecido">Fallecido</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-mono text-slate-500 uppercase tracking-wider mb-1">
+                    Centro de Salud Asignado
+                  </label>
+                  <select
+                    value={editHospitalId}
+                    onChange={(e) => setEditHospitalId(e.target.value)}
+                    className="w-full bg-white border border-slate-200 focus:border-sky-500 rounded-lg px-3 py-1.5 text-sm text-slate-800 focus:outline-none"
+                  >
+                    <option value="">Otros / Externos</option>
+                    {hospitales.map((h) => (
+                      <option key={h.id} value={h.id}>
+                        {h.nombre}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              {editError && (
+                <div className="bg-rose-50 border border-rose-200 text-rose-800 text-xs rounded-lg p-3">
+                  {editError}
+                </div>
+              )}
+
+              <div className="flex items-center space-x-3 pt-2 justify-end">
+                <button
+                  type="button"
+                  onClick={() => setEditingPatient(null)}
+                  className="bg-white hover:bg-slate-100 text-slate-700 border border-slate-200 text-xs font-semibold px-4 py-2 rounded-lg cursor-pointer"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  disabled={editLoading}
+                  className="bg-sky-600 hover:bg-sky-500 text-white text-xs font-bold px-4 py-2 rounded-lg cursor-pointer shadow-sm"
+                >
+                  {editLoading ? "Guardando..." : "Guardar Cambios"}
+                </button>
+              </div>
+            </form>
+          ) : searchResults.length > 0 ? (
+            /* SEARCH RESULTS LIST */
+            <div className="space-y-2">
+              {searchResults.map((p) => (
+                <div
+                  key={p.id}
+                  className="bg-slate-50 p-4 rounded-xl border border-slate-200 hover:border-slate-300 transition-all flex flex-col md:flex-row md:items-center justify-between text-left gap-3 shadow-sm"
+                >
+                  <div>
+                    <div className="flex items-center space-x-2">
+                      <span className="font-bold text-slate-800 text-sm">{p.nombre}</span>
+                      <span className={`text-[10px] px-2 py-0.5 rounded-full font-mono font-bold uppercase tracking-wider ${
+                        p.estado === "hospitalizado" ? "bg-sky-50 text-sky-700 border border-sky-200" :
+                        p.estado === "referido" ? "bg-sky-50 text-sky-700 border border-sky-200" :
+                        p.estado === "alta" ? "bg-slate-100 text-slate-600 border border-slate-200" :
+                        "bg-rose-50 text-rose-700 border border-rose-200"
+                      }`}>
+                        {p.estado === "hospitalizado" ? "Hospitalizado" :
+                          p.estado === "referido" ? "Referido" :
+                          p.estado === "alta" ? "De Alta" : "Fallecido"}
+                      </span>
+                    </div>
+
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-x-4 gap-y-1 text-xs text-slate-550 mt-2 font-sans">
+                      <div>
+                        Cédula: <span className="text-slate-700 font-mono">{p.cedula_masked || p.cedula || "No registrada"}</span>
+                      </div>
+                      <div>
+                        Edad: <span className="text-slate-700">{p.edad ? `${p.edad} años` : "Desconocida"}</span>
+                      </div>
+                      <div>
+                        Sexo: <span className="text-slate-700">{p.sexo}</span>
+                      </div>
+                      <div>
+                        Ingreso: <span className="text-slate-700 font-mono">{p.ingreso_fecha || "Sin fecha"}</span>
+                      </div>
+                    </div>
+
+                    <p className="text-xs text-slate-500 mt-1 font-sans">
+                      Centro: <span className="text-sky-700 font-medium">{p.hospital}</span>
+                      {p.procedencia && ` • Origen: ${p.procedencia}`}
+                    </p>
+                  </div>
+
+                  <div className="shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => handleStartEdit(p)}
+                      className="bg-white hover:bg-slate-50 text-sky-700 hover:text-sky-800 text-xs font-bold border border-slate-200 hover:border-slate-300 rounded-lg px-3.5 py-1.5 w-full md:w-auto transition-all cursor-pointer shadow-sm"
+                    >
+                      Actualizar Estado
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="flex flex-col items-center justify-center py-16 text-center">
+              <span className="text-slate-400 text-4xl mb-2">🔍</span>
+              <p className="text-sm font-semibold text-slate-700">No se encontraron pacientes</p>
+              <p className="text-xs text-slate-400 max-w-xs mt-1">
+                Escriba en el buscador para consultar o agregue un paciente usando el panel de registro rápido de la izquierda.
+              </p>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
